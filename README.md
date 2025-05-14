@@ -24,80 +24,57 @@ Add the following dependency to your `pom.xml`:
 ```xml
 <dependency>
   <groupId>com.mewebstudio</groupId>
-  <artifactId>spring-boot-jpa-slug</artifactId>
-  <version>0.1.1</version>
+  <artifactId>spring-boot-jpa-slug-kotlin</artifactId>
+  <version>0.1.0</version>
 </dependency>
 ```
 
 #### for Gradle users
 ```groovy
-implementation 'com.mewebstudio:spring-boot-jpa-slug:0.1.1'
+implementation 'com.mewebstudio:spring-boot-jpa-slug-kotlin:0.1.0'
 ```
 
 ## 🚀 Usage
 
 ### 1. Add the `@EnableSlug` annotation to your Spring Boot application class:
 
-```java
-import com.mewebstudio.springboot.jpa.slug.EnableSlug;
+```kotlin
+import com.mewebstudio.springboot.jpa.slug.kotlin.EnableSlug
 
 @SpringBootApplication
 @EnableSlug // Specify your custom generator if needed: @EnableSlug(generator = CustomSlugGenerator.class) 
-public class SlugJavaImplApplication {
-    public static void main(String[] args) {
-        SpringApplication.run(SlugJavaImplApplication.class, args);
-    }
+class SlugApplication
+
+fun main(args: Array<String>) {
+    runApplication<SlugApplication>(*args)
 }
 ```
 
 ### 2. Implement a Custom Slug Generator (Optional)
 
-```java
-import com.mewebstudio.springboot.jpa.slug.ISlugGenerator;
+```kotlin
+import com.mewebstudio.springboot.jpa.slug.kotlin.ISlugGenerator;
 
-public class CustomSlugGenerator implements ISlugGenerator {
-    @Override
-    public String generate(String input) {
-        // Implement your slug generation logic
-        return input.toLowerCase().replaceAll("[^a-z0-9]", "-");
-    }
+class CustomSlugGenerator : ISlugGenerator {
+    override fun generate(input: String?): String? = input?.lowercase()?.replace(Regex("[^a-z0-9\\s-]"), "")
 }
 ```
 
 ### 3. Add Slug Field to Your Entity
 
-```java
-import com.mewebstudio.springboot.jpa.slug.ISlugSupport;
-import com.mewebstudio.springboot.jpa.slug.SlugField;
-
-import javax.persistence.Entity;
+```kotlin
+import com.mewebstudio.springboot.jpa.slug.ISlugSupport
+import com.mewebstudio.springboot.jpa.slug.SlugField
+import com.mewebstudio.springboot.jpa.slug.SlugListener
 
 @Entity
-public class MyEntity implements ISlugSupport<Long> {
-    @Id
-    private Long id;
-
+@EntityListeners(SlugListener::class)
+class Category : AbstractBaseEntity(), ISlugSupport<String> {
     @SlugField
-    private String title;
+    var name: String? = null
 
-    private String slug;
-
-    @Override
-    public Long getId() {
-        return id;
-    }
-
-    @Override
-    public String getSlug() {
-        return slug;
-    }
-
-    @Override
-    public void setSlug(String slug) {
-        this.slug = slug;
-    }
-
-    // Getters and setters for other fields
+    @Column(name = "slug", unique = true, nullable = false)
+    override var slug: String? = null
 }
 ```
 
@@ -111,87 +88,87 @@ Slugs are automatically generated when entities are created or updated, and they
 
 Annotation to enable slug generation in your Spring Boot application. You can specify a custom slug generator by providing the `generator` attribute.
 
-```java
-public @interface EnableSlug {
-    Class<? extends ISlugGenerator> generator() default DefaultSlugGenerator.class;
-}
+```kotlin
+annotation class EnableSlug(
+    val generator: KClass<out ISlugGenerator> = DefaultSlugGenerator::class
+)
 ```
 
 `ISlugSupport`
 
 Interface for entities that support slug generation. Implement this interface in your entity classes to enable slug functionality.
 
-```java
-public interface ISlugSupport<ID> {
-    ID getId();
+```kotlin
+interface ISlugSupport<ID> {
+    val id: ID
 
-    String getSlug();
-
-    void setSlug(String slug);
+    var slug: String?
 }
 ```
 
 `ISlugGenerator`
 
 The interface for implementing custom slug generators.
-```java
-public interface ISlugGenerator {
-    String generate(String input);
+```kotlin
+interface ISlugGenerator {
+    fun generate(input: String?): String?
 }
 ```
 
 `SlugUtil`
 
 Utility class for managing the global slug generator and slug creation.
-```java
-public class SlugUtil {
-    public static void setGenerator(ISlugGenerator generator);
+```kotlin
+object SlugUtil {
+    fun setGenerator(slugGenerator: ISlugGenerator?)
 
-    public static ISlugGenerator getGenerator();
+    fun getGenerator(): ISlugGenerator = generator ?: throw SlugOperationException("SlugGenerator not set")
 
-    public static String slugify(String input);
+    fun generate(input: String?): String? = getGenerator().generate(input)
 }
 ```
 
 `SlugRegistry`
 
 A registry to manage the global `SlugProvider` instance.
-```java
-public class SlugRegistry {
-    public static void setSlugProvider(SlugProvider provider);
+```kotlin
+object SlugRegistry {
+    fun setSlugProvider(provider: SlugProvider?)
 
-    public static SlugProvider getSlugProvider();
+    fun getSlugProvider(): SlugProvider
 }
 ```
 
 `SlugProvider`
 
 An interface for generating slugs based on an entity and a base slug string.
-```java
-public interface SlugProvider {
-    String generateSlug(Object entity, String slug);
+```kotlin
+interface SlugProvider {
+    fun generateSlug(entity: ISlugSupport<*>, slug: String): String?
 }
 ```
 
 `SlugListener`
 
 A listener that automatically generates slugs for entities before they are persisted or updated in the database.
-```java
-public class SlugListener {
+```kotlin
+class SlugListener {
     @PrePersist
     @PreUpdate
-    public void handle(Object entity);
+    fun handle(entity: Any)
 }
 ```
 
 `SlugOperationException`
 
 Custom exception thrown when errors occur during slug generation.
-```java
-public class SlugOperationException extends RuntimeException {
-    public SlugOperationException(String message);
+```kotlin
+class SlugOperationException : RuntimeException {
+    constructor()
 
-    public SlugOperationException(String message, Throwable cause);
+    constructor(message: String)
+
+    constructor(message: String, cause: Throwable)
 }
 ```
 
@@ -200,6 +177,7 @@ public class SlugOperationException extends RuntimeException {
 ## 🛠 Requirements
 
 - Java 17+
+- Kotlin 1.9+
 - Spring Boot 3.x
 - Spring Data JPA
 
