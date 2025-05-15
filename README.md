@@ -42,7 +42,7 @@ implementation 'com.mewebstudio:spring-boot-jpa-slug-kotlin:0.1.0'
 import com.mewebstudio.springboot.jpa.slug.kotlin.EnableSlug
 
 @SpringBootApplication
-@EnableSlug // Specify your custom generator if needed: @EnableSlug(generator = CustomSlugGenerator.class) 
+@EnableSlug // Specify your custom generator if needed: @EnableSlug(generator = CustomSlugGenerator::class) 
 class SlugApplication
 
 fun main(args: Array<String>) {
