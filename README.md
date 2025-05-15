@@ -80,7 +80,7 @@ class Category : AbstractBaseEntity(), ISlugSupport<String> {
 
 ### 4. Handling Slug Generation
 
-Slugs are automatically generated when entities are created or updated, and they can be customized using the logic provided in the SlugProvider. The system will also ensure uniqueness by checking against the existing slugs in the database.
+Slugs are automatically generated when entities are created or updated, and they can be customized using the logic provided in the ISlugProvider. The system will also ensure uniqueness by checking against the existing slugs in the database.
 
 ## 📘 API Overview
 
@@ -130,20 +130,20 @@ object SlugUtil {
 
 `SlugRegistry`
 
-A registry to manage the global `SlugProvider` instance.
+A registry to manage the global `ISlugProvider` instance.
 ```kotlin
 object SlugRegistry {
-    fun setSlugProvider(provider: SlugProvider?)
+    fun setSlugProvider(provider: ISlugProvider?)
 
-    fun getSlugProvider(): SlugProvider
+    fun getSlugProvider(): ISlugProvider
 }
 ```
 
-`SlugProvider`
+`ISlugProvider`
 
 An interface for generating slugs based on an entity and a base slug string.
 ```kotlin
-interface SlugProvider {
+interface ISlugProvider {
     fun generateSlug(entity: ISlugSupport<*>, slug: String): String?
 }
 ```

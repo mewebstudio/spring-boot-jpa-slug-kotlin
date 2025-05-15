@@ -26,7 +26,7 @@ import kotlin.reflect.KClass
  * is present in the application context and when JPA is available.
  *
  * It initializes and registers the [ISlugGenerator] implementation defined in the
- * `@EnableSlug(generator = ...)` annotation and sets up a [SlugProvider]
+ * `@EnableSlug(generator = ...)` annotation and sets up a [ISlugProvider]
  * for managing unique slug generation with collision handling.
  *
  * The configuration ensures slugs are unique per entity type by checking the database
@@ -67,7 +67,7 @@ open class SlugAutoConfiguration(
      * Initializes slug generation support after the application context is loaded.
      *
      * This method scans for beans annotated with [EnableSlug], retrieves the
-     * configured [ISlugGenerator], and registers a [SlugProvider]
+     * configured [ISlugGenerator], and registers a [ISlugProvider]
      * responsible for generating unique slugs for entities implementing [ISlugSupport].
      *
      * @throws Exception if the slug generator cannot be instantiated
@@ -84,7 +84,7 @@ open class SlugAutoConfiguration(
         val generator = generatorClass.java.getDeclaredConstructor().newInstance()
         SlugUtil.setGenerator(generator)
 
-        SlugRegistry.setSlugProvider(object : SlugProvider {
+        SlugRegistry.setSlugProvider(object : ISlugProvider {
             override fun generateSlug(entity: ISlugSupport<*>, slug: String): String? {
                 try {
                     if (slug.isBlank()) {
@@ -112,7 +112,7 @@ open class SlugAutoConfiguration(
 
                     return candidateSlug
                 } catch (e: Exception) {
-                    throw SlugOperationException("SlugProvider failed: ${e.message}", e)
+                    throw SlugOperationException("ISlugProvider failed: ${e.message}", e)
                 }
             }
         })
