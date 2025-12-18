@@ -6,21 +6,14 @@ import jakarta.persistence.PersistenceContext
 import jakarta.persistence.criteria.CriteriaBuilder
 import jakarta.persistence.criteria.CriteriaQuery
 import jakarta.persistence.criteria.Root
-import org.springframework.boot.autoconfigure.AutoConfigureAfter
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
-import org.springframework.boot.autoconfigure.orm.jpa.JpaBaseConfiguration
 import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Configuration
-import org.springframework.transaction.PlatformTransactionManager
-import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.annotation.Transactional
-import org.springframework.transaction.support.TransactionTemplate
-import kotlin.jvm.javaClass
-import kotlin.jvm.kotlin
 import kotlin.reflect.KClass
 
 /**
- * Auto-configuration class for enabling slug generation in JPA entities.
+ * Autoconfiguration class for enabling slug generation in JPA entities.
  *
  * This configuration is activated automatically when a bean annotated with [EnableSlug]
  * is present in the application context and when JPA is available.
@@ -30,7 +23,7 @@ import kotlin.reflect.KClass
  * for managing unique slug generation with collision handling.
  *
  * The configuration ensures slugs are unique per entity type by checking the database
- * using a [TransactionTemplate].
+ * using the current EntityManager session.
  *
  * Slug creation logic is executed during application startup, leveraging a [PostConstruct]
  * lifecycle method.
@@ -43,10 +36,8 @@ import kotlin.reflect.KClass
  */
 @Configuration
 @ConditionalOnClass(EntityManager::class)
-@AutoConfigureAfter(JpaBaseConfiguration::class)
-open class SlugAutoConfiguration(
-    private val context: ApplicationContext,
-    private val transactionManager: PlatformTransactionManager
+class SlugAutoConfiguration(
+    private val context: ApplicationContext
 ) {
     companion object {
         /**
@@ -74,7 +65,7 @@ open class SlugAutoConfiguration(
      */
     @PostConstruct
     @Transactional
-    open fun configureSlugSupport() {
+    fun configureSlugSupport() {
         val beans = context.getBeansWithAnnotation(EnableSlug::class.java)
         if (beans.isEmpty()) {
             return
@@ -85,7 +76,11 @@ open class SlugAutoConfiguration(
         SlugUtil.setGenerator(generator)
 
         SlugRegistry.setSlugProvider(object : ISlugProvider {
-            override fun generateSlug(entity: ISlugSupport<*>, slug: String): String? {
+            override fun generateSlug(
+                entity: ISlugSupport<*>,
+                slug: String,
+                compositeConstraintFields: Map<String, Any?>
+            ): String {
                 try {
                     if (slug.isBlank()) {
                         throw SlugOperationException("Base slug cannot be blank")
@@ -100,7 +95,7 @@ open class SlugAutoConfiguration(
                     val entityId = entity.id
 
                     var attempt = 0
-                    while (slugExists(entity.javaClass.kotlin, candidateSlug, entityId)) {
+                    while (slugExists(entity.javaClass.kotlin, candidateSlug, entityId, compositeConstraintFields)) {
                         if (attempt++ >= MAX_ATTEMPTS) {
                             throw SlugOperationException(
                                 "Unable to generate unique slug for: $base, after $MAX_ATTEMPTS attempts"
@@ -124,41 +119,90 @@ open class SlugAutoConfiguration(
      * @param entityClass the entity class to check for slug collisions
      * @param slug the slug candidate to test
      * @param entityId the ID of the current entity (to exclude itself during updates)
+     * @param compositeConstraintFields Map of column names to values that are part of composite unique constraints.
+     *                                   For example, if there's a unique constraint on (locale, slug), this map will contain
+     *                                   {"locale": "en-US"}. The slug existence check will be scoped to these values.
      * @return `true` if the slug already exists for another entity, `false` otherwise
      */
-    fun slugExists(entityClass: KClass<*>, slug: String?, entityId: Any?): Boolean {
-        val transactionTemplate = TransactionTemplate(transactionManager).apply {
-            propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
-        }
-
-        return transactionTemplate.execute { _ ->
-            try {
-                if (slug.isNullOrBlank()) {
-                    return@execute false
-                }
-
-                val cb: CriteriaBuilder = entityManager.criteriaBuilder
-                val query: CriteriaQuery<Long> = cb.createQuery(Long::class.java)
-                val root: Root<*> = query.from(entityClass.java)
-
-                if (entityId != null) {
-                    query.select(cb.count(root))
-                        .where(
-                            cb.and(
-                                cb.equal(cb.lower(root.get("slug")), slug.lowercase()),
-                                cb.notEqual(root.get<Any>("id"), entityId)
-                            )
-                        )
-                } else {
-                    query.select(cb.count(root))
-                        .where(cb.equal(cb.lower(root.get("slug")), slug.lowercase()))
-                }
-
-                entityManager.createQuery(query).singleResult > 0
-            } catch (_: Exception) {
-                false
+    fun slugExists(
+        entityClass: KClass<*>,
+        slug: String?,
+        entityId: Any?,
+        compositeConstraintFields: Map<String, Any?> = emptyMap()
+    ): Boolean {
+        return try {
+            if (slug.isNullOrBlank()) {
+                return false
             }
-        } ?: false
+
+            // Flush pending changes to make them visible to this query
+            entityManager.flush()
+
+            val cb: CriteriaBuilder = entityManager.criteriaBuilder
+            val query: CriteriaQuery<Long> = cb.createQuery(Long::class.java)
+            val root: Root<*> = query.from(entityClass.java)
+
+            // Build predicates list
+            val predicates = mutableListOf<jakarta.persistence.criteria.Predicate>()
+
+            // Add slug equality predicate
+            predicates.add(cb.equal(cb.lower(root.get("slug")), slug.lowercase()))
+
+            // Add entity ID exclusion predicate (for updates)
+            if (entityId != null) {
+                predicates.add(cb.notEqual(root.get<Any>("id"), entityId))
+            }
+
+            // Add composite constraint field predicates
+            for ((columnName, value) in compositeConstraintFields) {
+                if (value != null) {
+                    // Find the field name by column name (handle both snake_case and camelCase)
+                    val fieldName = findFieldNameByColumnName(entityClass.java, columnName)
+                    if (fieldName != null) {
+                        predicates.add(cb.equal(root.get<Any>(fieldName), value))
+                    }
+                }
+            }
+
+            query.select(cb.count(root)).where(*predicates.toTypedArray())
+
+            val count = entityManager.createQuery(query).singleResult
+            count > 0
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Finds the field name in an entity class by its column name.
+     *
+     * @param entityClass The entity class to inspect
+     * @param columnName The database column name
+     * @return The field name, or null if not found
+     */
+    private fun findFieldNameByColumnName(entityClass: Class<*>, columnName: String): String? {
+        for (field in entityClass.declaredFields) {
+            // Check @Column annotation
+            val columnAnnotation = field.getAnnotation(jakarta.persistence.Column::class.java)
+            if (columnAnnotation != null && columnAnnotation.name == columnName) {
+                return field.name
+            }
+
+            // Fallback: if field name matches column name (handling snake_case conversion)
+            if (field.name.equals(columnName, ignoreCase = true) ||
+                toSnakeCase(field.name) == columnName
+            ) {
+                return field.name
+            }
+        }
+        return null
+    }
+
+    /**
+     * Converts camelCase to snake_case.
+     */
+    private fun toSnakeCase(str: String): String {
+        return str.replace(Regex("([a-z])([A-Z])"), "$1_$2").lowercase()
     }
 
     /**
@@ -171,7 +215,7 @@ open class SlugAutoConfiguration(
         val beans = context.getBeansWithAnnotation(EnableSlug::class.java)
         for (bean in beans.values) {
             val enableSlug = bean.javaClass.getAnnotation(EnableSlug::class.java)
-            if (enableSlug != null && enableSlug.generator != ISlugGenerator::class.java) {
+            if (enableSlug != null && enableSlug.generator != ISlugGenerator::class) {
                 return enableSlug.generator
             }
         }

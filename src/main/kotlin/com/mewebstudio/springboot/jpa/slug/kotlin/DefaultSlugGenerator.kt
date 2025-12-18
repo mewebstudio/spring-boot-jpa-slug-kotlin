@@ -23,7 +23,7 @@ class DefaultSlugGenerator : ISlugGenerator {
      * - Converting the string to lowercase
      * - Removing any characters that are not alphanumeric, spaces, or hyphens
      * - Replacing one or more spaces with a single hyphen
-     * - Ensuring that multiple hyphens are replaced by a single hyphen
+     * - Ensuring that a single hyphen replaces multiple hyphens
      *
      * @param input the input string to generate a slug from. May be `null`.
      * @return the generated slug, or `null` if the input is `null`.
