@@ -13,6 +13,7 @@ A simple and customizable slug generation solution for Spring Boot applications,
 - **Customizable Slug Generation**: Provides an interface for defining custom slug generation logic using `ISlugGenerator`.
 - **Automatic Slug Assignment**: Automatically generates and assigns slugs to entities upon creation or update.
 - **Unique Slug Enforcement**: Ensures that slugs are unique across entities, retrying with suffixes if needed.
+- **Composite Unique Constraint Support**: Automatically detects and respects composite unique constraints (e.g., `locale + slug`) for multi-locale entities.
 - **Integration with Spring Boot**: Easily integrates with Spring Boot using `@EnableSlug` and `SlugRegistry`.
 
 ## 📥 Installation
@@ -25,13 +26,13 @@ Add the following dependency to your `pom.xml`:
 <dependency>
   <groupId>com.mewebstudio</groupId>
   <artifactId>spring-boot-jpa-slug-kotlin</artifactId>
-  <version>0.1.2</version>
+  <version>0.1.4</version>
 </dependency>
 ```
 
 #### for Gradle users
 ```groovy
-implementation 'com.mewebstudio:spring-boot-jpa-slug-kotlin:0.1.2'
+implementation 'com.mewebstudio:spring-boot-jpa-slug-kotlin:0.1.4'
 ```
 
 ## 🚀 Usage
@@ -78,7 +79,35 @@ class Category : AbstractBaseEntity(), ISlugSupport<String> {
 }
 ```
 
-### 4. Handling Slug Generation
+### 4. Using Composite Unique Constraints (Optional)
+
+For multi-locale entities, you can define composite unique constraints on `(locale, slug)`. The slug generator will automatically detect and respect these constraints:
+
+```kotlin
+@Entity
+@Table(
+    uniqueConstraints = [
+        UniqueConstraint(columnNames = ["locale", "slug"])
+    ]
+)
+@EntityListeners(SlugListener::class)
+class ProductTranslation : AbstractBaseEntity(), ISlugSupport<String> {
+    @Column(name = "locale")
+    var locale: String = ""
+
+    @SlugField
+    @Column(name = "title")
+    var title: String = ""
+
+    @Column(name = "slug")
+    override var slug: String? = null
+
+    // The slug generator will automatically ensure uniqueness within each locale
+    // Same slug can exist in different locales
+}
+```
+
+### 5. Handling Slug Generation
 
 Slugs are automatically generated when entities are created or updated, and they can be customized using the logic provided in the ISlugProvider. The system will also ensure uniqueness by checking against the existing slugs in the database.
 
@@ -141,10 +170,10 @@ object SlugRegistry {
 
 `ISlugProvider`
 
-An interface for generating slugs based on an entity and a base slug string.
+An interface for generating slugs based on an entity and a base slug string. Supports composite unique constraints.
 ```kotlin
 interface ISlugProvider {
-    fun generateSlug(entity: ISlugSupport<*>, slug: String): String?
+    fun generateSlug(entity: ISlugSupport<*>, slug: String, compositeConstraintFields: Map<String, Any?> = emptyMap()): String
 }
 ```
 

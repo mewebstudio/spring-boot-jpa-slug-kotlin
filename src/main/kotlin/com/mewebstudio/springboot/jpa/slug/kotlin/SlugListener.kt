@@ -1,9 +1,11 @@
 package com.mewebstudio.springboot.jpa.slug.kotlin
 
+import jakarta.persistence.Column
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import jakarta.persistence.PrePersist
 import jakarta.persistence.PreUpdate
+import jakarta.persistence.Table
 
 /**
  * JPA entity listener for generating and updating slugs on entities
@@ -50,9 +52,12 @@ class SlugListener {
 
             val provider = SlugRegistry.getSlugProvider()
 
-            val generatedSlug = provider.generateSlug(entity, slug)
-            if (generatedSlug.isNullOrBlank()) {
-                throw SlugOperationException("Generated slug is null or blank for base: $slug")
+            // Extract composite unique constraint fields (e.g., locale for locale+slug uniqueness)
+            val constraintFields = getCompositeUniqueConstraintFields(entity)
+
+            val generatedSlug = provider.generateSlug(entity, slug, constraintFields)
+            if (generatedSlug.isBlank()) {
+                throw SlugOperationException("Generated slug is blank for base: $slug")
             }
 
             entity.slug = generatedSlug
@@ -106,5 +111,86 @@ class SlugListener {
         }
 
         return null
+    }
+
+    /**
+     * Extracts composite unique constraint field values from the entity.
+     * For example, if there's a unique constraint on (locale, slug), this will return {"locale": "en-US"}.
+     *
+     * @param entity The entity to inspect.
+     * @return Map of field names to their current values that are part of composite unique constraints with slug.
+     */
+    private fun getCompositeUniqueConstraintFields(entity: Any): Map<String, Any?> {
+        val result = mutableMapOf<String, Any?>()
+
+        try {
+            val tableAnnotation = entity::class.java.getAnnotation(Table::class.java)
+
+            if (tableAnnotation != null && tableAnnotation.uniqueConstraints.isNotEmpty()) {
+                // Find unique constraints that include "slug"
+                for (constraint in tableAnnotation.uniqueConstraints) {
+                    val columnNames = constraint.columnNames
+
+                    if (columnNames.contains("slug") && columnNames.size > 1) {
+                        // This is a composite constraint with slug, extract other field values
+                        for (columnName in columnNames) {
+                            if (columnName != "slug") {
+                                // Find the field with this column name
+                                val fieldValue = findFieldValueByColumnName(entity, columnName)
+                                if (fieldValue != null) {
+                                    result[columnName] = fieldValue
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // If we can't determine composite constraints, return an empty map (fallback to old behavior)
+        }
+
+        return result
+    }
+
+    /**
+     * Finds a field value by its column name from @Column annotation.
+     *
+     * @param entity The entity to inspect.
+     * @param columnName The database column name.
+     * @return The field value, or null if not found.
+     */
+    private fun findFieldValueByColumnName(entity: Any, columnName: String): Any? {
+        for (field in entity::class.java.declaredFields) {
+            field.isAccessible = true
+
+            // Check @Column annotation
+            val columnAnnotation = field.getAnnotation(Column::class.java)
+            if (columnAnnotation != null && columnAnnotation.name == columnName) {
+                return try {
+                    field.get(entity)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
+            // Fallback: if field name matches column name (snake_case vs. camelCase)
+            if (field.name.equals(columnName, ignoreCase = true) ||
+                toSnakeCase(field.name) == columnName
+            ) {
+                return try {
+                    field.get(entity)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Converts camelCase to snake_case.
+     */
+    private fun toSnakeCase(str: String): String {
+        return str.replace(Regex("([a-z])([A-Z])"), "$1_$2").lowercase()
     }
 }

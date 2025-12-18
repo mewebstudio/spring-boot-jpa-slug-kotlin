@@ -8,7 +8,7 @@ package com.mewebstudio.springboot.jpa.slug.kotlin
  *
  * Implementing this interface allows the slug generation mechanism
  * (e.g., via [ISlugGenerator]) to interact with the entity's
- * identifier and slug field in a consistent way.
+ * identifier and slug field consistently.
  *
  * **Usage example:**
  * <pre>{@code

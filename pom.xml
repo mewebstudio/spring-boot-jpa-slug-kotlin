@@ -8,7 +8,7 @@
     <url>https://github.com/mewebstudio/spring-boot-jpa-slug-kotlin</url>
     <groupId>com.mewebstudio</groupId>
     <artifactId>spring-boot-jpa-slug-kotlin</artifactId>
-    <version>0.1.2</version>
+    <version>0.1.4</version>
     <packaging>jar</packaging>
 
     <developers>
@@ -54,7 +54,7 @@
         <junit-jupiter.version>5.11.4</junit-jupiter.version>
         <mockito.version>5.14.2</mockito.version>
         <maven-source-plugin.version>3.3.1</maven-source-plugin.version>
-        <dokka-maven-plugin.version>2.0.0</dokka-maven-plugin.version>
+        <dokka-maven-plugin.version>1.9.10</dokka-maven-plugin.version>
         <maven-gpg-plugin.version>3.2.7</maven-gpg-plugin.version>
         <central-publishing-maven-plugin.version>0.7.0</central-publishing-maven-plugin.version>
         <maven-release-plugin.version>3.1.1</maven-release-plugin.version>
@@ -126,8 +126,21 @@
                         </goals>
                     </execution>
                 </executions>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.jetbrains.kotlin</groupId>
+                        <artifactId>kotlin-maven-allopen</artifactId>
+                        <version>${kotlin.version}</version>
+                    </dependency>
+                </dependencies>
                 <configuration>
                     <jvmTarget>17</jvmTarget>
+                    <args>
+                        <arg>-Xskip-metadata-version-check</arg>
+                    </args>
+                    <compilerPlugins>
+                        <plugin>spring</plugin>
+                    </compilerPlugins>
                 </configuration>
             </plugin>
             <plugin>
