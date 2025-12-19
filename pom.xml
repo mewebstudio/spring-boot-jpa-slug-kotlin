@@ -8,7 +8,7 @@
     <url>https://github.com/mewebstudio/spring-boot-jpa-slug-kotlin</url>
     <groupId>com.mewebstudio</groupId>
     <artifactId>spring-boot-jpa-slug-kotlin</artifactId>
-    <version>0.1.4</version>
+    <version>0.1.5</version>
     <packaging>jar</packaging>
 
     <developers>
