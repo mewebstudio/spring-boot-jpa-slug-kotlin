@@ -6,6 +6,7 @@ import jakarta.persistence.PersistenceContext
 import jakarta.persistence.criteria.CriteriaBuilder
 import jakarta.persistence.criteria.CriteriaQuery
 import jakarta.persistence.criteria.Root
+import org.springframework.beans.factory.getBeansWithAnnotation
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
 import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Configuration
@@ -66,7 +67,7 @@ class SlugAutoConfiguration(
     @PostConstruct
     @Transactional
     fun configureSlugSupport() {
-        val beans = context.getBeansWithAnnotation(EnableSlug::class.java)
+        val beans = context.getBeansWithAnnotation<EnableSlug>()
         if (beans.isEmpty()) {
             return
         }
@@ -135,9 +136,6 @@ class SlugAutoConfiguration(
                 return false
             }
 
-            // Flush pending changes to make them visible to this query
-            entityManager.flush()
-
             val cb: CriteriaBuilder = entityManager.criteriaBuilder
             val query: CriteriaQuery<Long> = cb.createQuery(Long::class.java)
             val root: Root<*> = query.from(entityClass.java)
@@ -166,9 +164,19 @@ class SlugAutoConfiguration(
 
             query.select(cb.count(root)).where(*predicates.toTypedArray())
 
-            val count = entityManager.createQuery(query).singleResult
+            val count = try {
+                // Disable an auto-flush to prevent "detached entity passed to persist" errors
+                // This happens when the entity has ID but is not yet managed
+                val typedQuery = entityManager.createQuery(query)
+                typedQuery.flushMode = jakarta.persistence.FlushModeType.COMMIT
+                typedQuery.singleResult
+            } catch (_: Exception) {
+                // Query failed, return 0 to indicate no existing slug found
+                0L
+            }
             count > 0
         } catch (_: Exception) {
+            // Any other error, assume slug doesn't exist to allow the operation to proceed
             false
         }
     }
@@ -212,7 +220,7 @@ class SlugAutoConfiguration(
      * @throws SlugOperationException if no valid generator is defined
      */
     private fun resolveGeneratorClass(): KClass<out ISlugGenerator> {
-        val beans = context.getBeansWithAnnotation(EnableSlug::class.java)
+        val beans = context.getBeansWithAnnotation<EnableSlug>()
         for (bean in beans.values) {
             val enableSlug = bean.javaClass.getAnnotation(EnableSlug::class.java)
             if (enableSlug != null && enableSlug.generator != ISlugGenerator::class) {
