@@ -1,6 +1,7 @@
 package com.mewebstudio.springboot.jpa.slug.kotlin
 
 import jakarta.annotation.PostConstruct
+import jakarta.persistence.Column
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import jakarta.persistence.criteria.CriteriaBuilder
@@ -191,7 +192,7 @@ class SlugAutoConfiguration(
     private fun findFieldNameByColumnName(entityClass: Class<*>, columnName: String): String? {
         for (field in entityClass.declaredFields) {
             // Check @Column annotation
-            val columnAnnotation = field.getAnnotation(jakarta.persistence.Column::class.java)
+            val columnAnnotation = field.getAnnotation(Column::class.java)
             if (columnAnnotation != null && columnAnnotation.name == columnName) {
                 return field.name
             }

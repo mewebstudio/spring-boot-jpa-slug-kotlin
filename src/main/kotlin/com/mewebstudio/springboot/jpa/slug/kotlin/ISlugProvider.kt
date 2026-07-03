@@ -19,5 +19,9 @@ interface ISlugProvider {
      *                                   scope of these constraint fields.
      * @return A valid and unique slug string to be assigned to the entity.
      */
-    fun generateSlug(entity: ISlugSupport<*>, slug: String, compositeConstraintFields: Map<String, Any?> = emptyMap()): String
+    fun generateSlug(
+        entity: ISlugSupport<*>,
+        slug: String,
+        compositeConstraintFields: Map<String, Any?> = emptyMap()
+    ): String
 }
