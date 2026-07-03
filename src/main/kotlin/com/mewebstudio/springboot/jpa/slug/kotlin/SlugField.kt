@@ -1,32 +1,34 @@
 package com.mewebstudio.springboot.jpa.slug.kotlin
 
-import kotlin.annotation.AnnotationRetention
-import kotlin.annotation.AnnotationTarget
-import kotlin.annotation.Retention
-import kotlin.annotation.Target
-
 /**
- * Annotation to mark a field in a class that should be processed for slug generation.
+ * Marks an entity field or class as the source for slug generation.
  *
- * This annotation is typically used to indicate which fields in an entity or model class
- * need to be automatically transformed into slugs when saved or processed.
- * It can be applied to fields that contain text-based data that should be converted into a slug
- * (e.g., a title or name field).
+ * **Field-level (backward compatible):**
+ * ```kotlin
+ * @SlugField
+ * var title: String? = null
+ * ```
+ * The annotated field's value is used as the slug source.
  *
- * Example usage:
- * <pre>
- *     class BlogPost {
- *         {@literal @}SlugField
- *         var title: String? = null
- *     }
- * </pre>
+ * **Class-level (multi-field):**
+ * ```kotlin
+ * @SlugField("title", "description")
+ * class Article : ISlugSupport<Long> { ... }
+ * ```
+ * The listed field values are joined with [separator] before slug generation.
  *
- * The field marked with {@link SlugField} will be eligible for slug generation based on
- * the configured [ISlugGenerator] or slugging strategy.
+ * **Dot-notation (related entity field):**
+ * ```kotlin
+ * @SlugField("category.title", "title")
+ * class Article : ISlugSupport<Long> { ... }
+ * ```
+ * Traverses the object graph via reflection/getters. Null intermediate values skip that path.
  *
- * This annotation is retained at runtime, allowing reflection-based slug generation or
- * processing to take place at runtime.
+ * When both a class-level and a field-level `@SlugField` are present, class-level takes priority.
  */
-@Target(AnnotationTarget.FIELD)
+@Target(AnnotationTarget.FIELD, AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.RUNTIME)
-annotation class SlugField
+annotation class SlugField(
+    vararg val fields: String,
+    val separator: String = " "
+)
