@@ -5,10 +5,12 @@ import org.junit.jupiter.api.Assertions.*
 import org.mockito.Mockito.*
 import org.junit.jupiter.api.Test
 
+@DisplayName("SlugUtil Test Suite")
 class SlugUtilTest {
     private val slugGenerator: ISlugGenerator = mock(ISlugGenerator::class.java)
 
     @Test
+    @DisplayName("Test generate with valid input")
     fun `test generate with valid input`() {
         // Given
         val input = "Hello World! This is a test."
@@ -27,6 +29,7 @@ class SlugUtilTest {
     }
 
     @Test
+    @DisplayName("Test generate with null input")
     fun `test generate with null input`() {
         // Given
         val input: String? = null
@@ -43,6 +46,7 @@ class SlugUtilTest {
     }
 
     @Test
+    @DisplayName("Test generate with empty input")
     fun `test setGenerator with null generator`() {
         // Given
         val exception = assertThrows<SlugOperationException> {
@@ -54,6 +58,7 @@ class SlugUtilTest {
     }
 
     @Test
+    @DisplayName("Test generate with empty input")
     fun `test getGenerator when generator is not set`() {
         // Given
         resetSlugUtil()
@@ -68,6 +73,7 @@ class SlugUtilTest {
     }
 
     @Test
+    @DisplayName("Test generate with valid input")
     fun `test generate with empty string`() {
         // Given
         val input = ""
@@ -86,6 +92,7 @@ class SlugUtilTest {
     }
 
     @Test
+    @DisplayName("Test generate with valid input")
     fun `test generate with special characters input`() {
         // Given
         val input = "Hello @World! #Test$"
@@ -104,6 +111,7 @@ class SlugUtilTest {
     }
 
     @Test
+    @DisplayName("Test generate with valid input")
     fun `test generate with multiple spaces`() {
         // Given
         val input = "Hello    World     Test"
@@ -122,6 +130,7 @@ class SlugUtilTest {
     }
 
     @Test
+    @DisplayName("Test generate with invalid input")
     fun `test generate with mixed case input`() {
         // Given
         val input = "HeLLo WoRLd"

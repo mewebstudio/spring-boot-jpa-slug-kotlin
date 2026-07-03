@@ -2,11 +2,17 @@ package com.mewebstudio.springboot.jpa.slug.kotlin
 
 import jakarta.annotation.PostConstruct
 import jakarta.persistence.Column
+import jakarta.persistence.Entity
 import jakarta.persistence.EntityManager
+import jakarta.persistence.EntityManagerFactory
 import jakarta.persistence.PersistenceContext
+import jakarta.persistence.PersistenceUnit
 import jakarta.persistence.criteria.CriteriaBuilder
 import jakarta.persistence.criteria.CriteriaQuery
 import jakarta.persistence.criteria.Root
+import org.hibernate.engine.spi.SessionFactoryImplementor
+import org.hibernate.event.service.spi.EventListenerRegistry
+import org.hibernate.event.spi.EventType
 import org.springframework.beans.factory.getBeansWithAnnotation
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
 import org.springframework.context.ApplicationContext
@@ -17,24 +23,18 @@ import kotlin.reflect.KClass
 /**
  * Autoconfiguration class for enabling slug generation in JPA entities.
  *
- * This configuration is activated automatically when a bean annotated with [EnableSlug]
- * is present in the application context and when JPA is available.
+ * Activated when a bean annotated with [EnableSlug] is present and JPA is on the classpath.
  *
- * It initializes and registers the [ISlugGenerator] implementation defined in the
- * `@EnableSlug(generator = ...)` annotation and sets up a [ISlugProvider]
- * for managing unique slug generation with collision handling.
- *
- * The configuration ensures slugs are unique per entity type by checking the database
- * using the current EntityManager session.
- *
- * Slug creation logic is executed during application startup, leveraging a [PostConstruct]
- * lifecycle method.
+ * Responsibilities:
+ * - Registers the [ISlugGenerator] and [ISlugProvider] for unique slug generation.
+ * - Scans JPA entity metadata to build a cascade dependency map for dot-notation `@SlugField` paths.
+ * - Registers [SlugCascadeListener] with Hibernate so that updating an intermediate entity
+ *   (e.g. `Category`) automatically refreshes the slug of dependent entities (e.g. `Article`).
  *
  * @see EnableSlug
  * @see ISlugGenerator
  * @see ISlugSupport
  * @see SlugRegistry
- * @see SlugUtil
  */
 @Configuration
 @ConditionalOnClass(EntityManager::class)
@@ -42,36 +42,20 @@ class SlugAutoConfiguration(
     private val context: ApplicationContext
 ) {
     companion object {
-        /**
-         * Maximum number of attempts to generate a unique slug.
-         * If exceeded, an exception is thrown.
-         */
         private const val MAX_ATTEMPTS = 100
     }
 
-    /**
-     * The entity manager used for database operations.
-     * This is injected by the Spring container.
-     */
     @PersistenceContext
     private lateinit var entityManager: EntityManager
 
-    /**
-     * Initializes slug generation support after the application context is loaded.
-     *
-     * This method scans for beans annotated with [EnableSlug], retrieves the
-     * configured [ISlugGenerator], and registers a [ISlugProvider]
-     * responsible for generating unique slugs for entities implementing [ISlugSupport].
-     *
-     * @throws Exception if the slug generator cannot be instantiated
-     */
+    @PersistenceUnit
+    private lateinit var entityManagerFactory: EntityManagerFactory
+
     @PostConstruct
     @Transactional
     fun configureSlugSupport() {
         val beans = context.getBeansWithAnnotation<EnableSlug>()
-        if (beans.isEmpty()) {
-            return
-        }
+        if (beans.isEmpty()) return
 
         val generatorClass = resolveGeneratorClass()
         val generator = generatorClass.java.getDeclaredConstructor().newInstance()
@@ -84,19 +68,16 @@ class SlugAutoConfiguration(
                 compositeConstraintFields: Map<String, Any?>
             ): String {
                 try {
-                    if (slug.isBlank()) {
-                        throw SlugOperationException("Base slug cannot be blank")
-                    }
+                    if (slug.isBlank()) throw SlugOperationException("Base slug cannot be blank")
 
                     val base = SlugUtil.generate(slug)
                         ?: throw SlugOperationException("Slugified base is null or blank: $slug")
 
                     var candidateSlug = base
                     var i = 2
-
                     val entityId = entity.id
-
                     var attempt = 0
+
                     while (slugExists(entity.javaClass.kotlin, candidateSlug, entityId, compositeConstraintFields)) {
                         if (attempt++ >= MAX_ATTEMPTS) {
                             throw SlugOperationException(
@@ -113,18 +94,20 @@ class SlugAutoConfiguration(
                 }
             }
         })
+
+        buildCascadeMap()
+        registerCascadeListener()
     }
 
     /**
      * Checks whether a given slug already exists in the database for the specified entity type.
      *
-     * @param entityClass the entity class to check for slug collisions
-     * @param slug the slug candidate to test
-     * @param entityId the ID of the current entity (to exclude itself during updates)
-     * @param compositeConstraintFields Map of column names to values that are part of composite unique constraints.
-     *                                   For example, if there's a unique constraint on (locale, slug), this map will contain
-     *                                   {"locale": "en-US"}. The slug existence check will be scoped to these values.
-     * @return `true` if the slug already exists for another entity, `false` otherwise
+     * @param entityClass The entity class to check.
+     * @param slug The slug to check for existence.
+     * @param entityId The ID of the entity to exclude from the check (useful for updates).
+     * @param compositeConstraintFields A map of additional field names and values to apply as constraints
+     * when checking for slug existence (e.g., for composite uniqueness).
+     * @return True if the slug exists for another entity, false otherwise.
      */
     fun slugExists(
         entityClass: KClass<*>,
@@ -133,9 +116,7 @@ class SlugAutoConfiguration(
         compositeConstraintFields: Map<String, Any?> = emptyMap()
     ): Boolean {
         return try {
-            if (slug.isNullOrBlank()) {
-                return false
-            }
+            if (slug.isNullOrBlank()) return false
 
             val cb: CriteriaBuilder = entityManager.criteriaBuilder
             val query: CriteriaQuery<Long> = cb.createQuery(Long::class.java)
@@ -183,24 +164,83 @@ class SlugAutoConfiguration(
     }
 
     /**
-     * Finds the field name in an entity class by its column name.
+     * Scans the JPA metamodel for [ISlugSupport] entities that have class-level `@SlugField`
+     * with dot-notation paths and builds a reverse cascade dependency map in [SlugRegistry].
      *
-     * @param entityClass The entity class to inspect
-     * @param columnName The database column name
-     * @return The field name, or null if not found
+     * Example: `@SlugField("category.title", "title")` on `Article` registers:
+     * `Category → CascadeDependency(Article, "category")`
+     */
+    private fun buildCascadeMap() {
+        SlugRegistry.clearCascadeDependents()
+        val entityClasses = entityManagerFactory.metamodel.entities.map { it.javaType }
+
+        for (entityClass in entityClasses) {
+            if (!ISlugSupport::class.java.isAssignableFrom(entityClass)) continue
+
+            val classAnnotation = entityClass.getAnnotation(SlugField::class.java) ?: continue
+
+            for (fieldPath in classAnnotation.fields) {
+                if (!fieldPath.contains(".")) continue
+
+                val firstSegment = fieldPath.substringBefore(".")
+                val intermediateType = try {
+                    val field = SlugListener.findFieldInHierarchy(entityClass, firstSegment) ?: continue
+                    field.type
+                } catch (_: Exception) {
+                    continue
+                }
+
+                // Only register cascade for actual JPA entities, not embeddable
+                if (entityClasses.none { it == intermediateType }) continue
+
+                val dep = SlugRegistry.CascadeDependency(
+                    fieldName = firstSegment,
+                    entityName = resolveEntityName(entityClass)
+                )
+                SlugRegistry.registerCascadeDependent(intermediateType, dep)
+            }
+        }
+    }
+
+    /**
+     * Registers [SlugCascadeListener] with Hibernate's [EventListenerRegistry] so it fires
+     * on every entity PostUpdate without requiring `@EntityListeners` on each entity class.
+     */
+    private fun registerCascadeListener() {
+        try {
+            val sessionFactory = entityManagerFactory
+                .unwrap(SessionFactoryImplementor::class.java)
+            val registry = sessionFactory.serviceRegistry
+                .getService(EventListenerRegistry::class.java)
+            registry?.appendListeners(EventType.POST_UPDATE, SlugCascadeListener())
+        } catch (_: Exception) {
+            // If Hibernate is not the JPA provider, cascade slug updates are silently skipped
+        }
+    }
+
+    /**
+     * Returns the JPQL entity name for a class — respects `@Entity(name = "...")` if set.
+     *
+     * @param clazz The entity class to resolve.
+     * @return The JPQL entity name.
+     */
+    private fun resolveEntityName(clazz: Class<*>): String {
+        val entityAnnotation = clazz.getAnnotation(Entity::class.java)
+        return if (entityAnnotation?.name?.isNotBlank() == true) entityAnnotation.name else clazz.simpleName
+    }
+
+    /**
+     * Finds the field name in the entity class that corresponds to the given column name.
+     *
+     * @param entityClass The entity class to search.
+     * @param columnName The column name to match.
+     * @return The field name if found, or null if not found.
      */
     private fun findFieldNameByColumnName(entityClass: Class<*>, columnName: String): String? {
         for (field in entityClass.declaredFields) {
-            // Check @Column annotation
             val columnAnnotation = field.getAnnotation(Column::class.java)
-            if (columnAnnotation != null && columnAnnotation.name == columnName) {
-                return field.name
-            }
-
-            // Fallback: if field name matches column name (handling snake_case conversion)
-            if (field.name.equals(columnName, ignoreCase = true) ||
-                toSnakeCase(field.name) == columnName
-            ) {
+            if (columnAnnotation != null && columnAnnotation.name == columnName) return field.name
+            if (field.name.equals(columnName, ignoreCase = true) || toSnakeCase(field.name) == columnName) {
                 return field.name
             }
         }
@@ -208,17 +248,19 @@ class SlugAutoConfiguration(
     }
 
     /**
-     * Converts camelCase to snake_case.
+     * Converts a camelCase string to snake_case.
+     *
+     * @param str The camelCase string to convert.
+     * @return The converted snake_case string.
      */
-    private fun toSnakeCase(str: String): String {
-        return str.replace(Regex("([a-z])([A-Z])"), "$1_$2").lowercase()
-    }
+    private fun toSnakeCase(str: String): String =
+        str.replace(Regex("([a-z])([A-Z])"), "$1_$2").lowercase()
 
     /**
-     * Resolves the [ISlugGenerator] implementation class from the [EnableSlug] annotation.
+     * Resolves the [ISlugGenerator] class from the [EnableSlug] annotation on any bean in the context.
      *
-     * @return the class of the slug generator to use
-     * @throws SlugOperationException if no valid generator is defined
+     * @return The [KClass] of the slug generator.
+     * @throws SlugOperationException if no slug generator is defined in [EnableSlug].
      */
     private fun resolveGeneratorClass(): KClass<out ISlugGenerator> {
         val beans = context.getBeansWithAnnotation<EnableSlug>()
@@ -228,7 +270,6 @@ class SlugAutoConfiguration(
                 return enableSlug.generator
             }
         }
-
         throw SlugOperationException("No slug generator defined in @EnableSlug annotation.")
     }
 }
