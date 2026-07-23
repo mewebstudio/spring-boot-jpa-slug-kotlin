@@ -4,6 +4,7 @@ import jakarta.persistence.EntityManager
 import jakarta.persistence.FlushModeType
 import org.hibernate.event.spi.PostUpdateEvent
 import org.hibernate.event.spi.PostUpdateEventListener
+import java.lang.reflect.Method
 
 /**
  * Hibernate [PostUpdateEventListener] that cascades slug regeneration to dependent entities.
@@ -15,23 +16,36 @@ import org.hibernate.event.spi.PostUpdateEventListener
  * Registered programmatically by [SlugAutoConfiguration] — no `@EntityListeners` needed on the entity.
  */
 class SlugCascadeListener : PostUpdateEventListener {
-    @Suppress("SqlSourceToSinkFlow")
+    companion object {
+        /**
+         * Cached reflective handle to `PostUpdateEvent.getSession()`, resolved by name so it works
+         * regardless of the return type declared by the Hibernate version on the classpath
+         * (Hibernate 6 → `EventSource`, Hibernate 7 → `SharedSessionContractImplementor`).
+         */
+        private val SESSION_ACCESSOR: Method = PostUpdateEvent::class.java.getMethod("getSession")
+    }
+
     override fun onPostUpdate(event: PostUpdateEvent) {
         val updatedEntity = event.entity
         val dependents = SlugRegistry.getCascadeDependents(updatedEntity::class.java)
         if (dependents.isEmpty()) return
 
+        // Resolve the session reflectively: PostUpdateEvent.getSession()'s declared return type changed
+        // between Hibernate 6 (EventSource) and Hibernate 7 (SharedSessionContractImplementor). Calling
+        // it directly binds the bytecode to one return-type descriptor and throws NoSuchMethodError on
+        // the other. Reflection resolves the method by name (return type is not part of the lookup), and
+        // the concrete session is a jakarta.persistence.EntityManager on both versions.
         @Suppress("UNCHECKED_CAST")
-        val em = event.session as EntityManager
+        val em = SESSION_ACCESSOR.invoke(event) as EntityManager
 
-        for (dep in dependents) {
+        for ((fieldName, entityName) in dependents) {
             // Both values are JPA identifiers validated at registration time (alphanumeric + underscore).
             // String interpolation into JPQL is intentional — parameterized entity/field names are not
             // supported by JPA, and these values are derived from class metadata, never from user input.
-            if (!SAFE_IDENTIFIER.matches(dep.entityName) || !SAFE_IDENTIFIER.matches(dep.fieldName)) continue
+            if (!SAFE_IDENTIFIER.matches(entityName) || !SAFE_IDENTIFIER.matches(fieldName)) continue
 
             try {
-                val selectJpql = "SELECT e FROM ${dep.entityName} e WHERE e.${dep.fieldName} = :ref"
+                val selectJpql = "SELECT e FROM $entityName e WHERE e.$fieldName = :ref"
                 val results = em.createQuery(selectJpql)
                     .setParameter("ref", updatedEntity)
                     .apply { flushMode = FlushModeType.COMMIT }
@@ -43,7 +57,7 @@ class SlugCascadeListener : PostUpdateEventListener {
                     val base = SlugUtil.generate(sourceValue) ?: continue
                     val newSlug = SlugRegistry.getSlugProvider().generateSlug(dependent, base)
 
-                    val updateJpql = "UPDATE ${dep.entityName} e SET e.slug = :slug WHERE e.id = :id"
+                    val updateJpql = "UPDATE $entityName e SET e.slug = :slug WHERE e.id = :id"
                     em.createQuery(updateJpql)
                         .setParameter("slug", newSlug)
                         .setParameter("id", dependent.id)
