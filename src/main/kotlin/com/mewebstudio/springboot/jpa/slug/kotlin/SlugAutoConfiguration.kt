@@ -17,6 +17,7 @@ import org.springframework.beans.factory.getBeansWithAnnotation
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
 import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Configuration
+import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.Transactional
 import kotlin.reflect.KClass
 
@@ -212,7 +213,8 @@ class SlugAutoConfiguration(
                 .unwrap(SessionFactoryImplementor::class.java)
             val registry = sessionFactory.serviceRegistry
                 .getService(EventListenerRegistry::class.java)
-            registry?.appendListeners(EventType.POST_UPDATE, SlugCascadeListener())
+            val transactionManager = context.getBean(PlatformTransactionManager::class.java)
+            registry?.appendListeners(EventType.POST_UPDATE, SlugCascadeListener(transactionManager, entityManager))
         } catch (_: Exception) {
             // If Hibernate is not the JPA provider, cascade slug updates are silently skipped
         }
